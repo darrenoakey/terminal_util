@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import plistlib
+import colorsys
+import subprocess
+from colorama import init, Fore, Style
+
+# Initialize colorama for colored terminal messages
+init(autoreset=True)
+
+# Import Cocoa classes via PyObjC
+from AppKit import NSColor
+import Foundation
+
+
+# Archive a given NSColor object using NSKeyedArchiver
+# Creates a byte representation needed for Terminal theme data blocks
+def archive_color(color):
+    archived_data = Foundation.NSKeyedArchiver.archivedDataWithRootObject_(color)
+    return bytes(archived_data)
+
+
+# Archive a color given as an (r, g, b) tuple by converting to NSColor first
+def archive_color_from_tuple(color_tuple):
+    r, g, b = color_tuple
+    nscolor = NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, 1.0)
+    return archive_color(nscolor)
+
+
+# Generate a descriptive color name based on HSV parameters
+# Creates distinctive names by combining hue-based color names with
+# modifiers based on saturation and brightness
+def get_color_name(hue, saturation, value):
+    # Convert hue to degrees for more precise color naming
+    deg = hue * 360.0
+
+    # More specific color names based on hue ranges
+    if deg < 10 or deg >= 350:
+        base = "crimson"
+    elif deg < 20:
+        base = "scarlet"
+    elif deg < 30:
+        base = "ruby"
+    elif deg < 40:
+        base = "tangerine"
+    elif deg < 50:
+        base = "amber"
+    elif deg < 60:
+        base = "gold"
+    elif deg < 70:
+        base = "lemon"
+    elif deg < 80:
+        base = "lime"
+    elif deg < 100:
+        base = "emerald"
+    elif deg < 120:
+        base = "forest"
+    elif deg < 140:
+        base = "jade"
+    elif deg < 160:
+        base = "mint"
+    elif deg < 180:
+        base = "teal"
+    elif deg < 200:
+        base = "azure"
+    elif deg < 220:
+        base = "cobalt"
+    elif deg < 240:
+        base = "navy"
+    elif deg < 260:
+        base = "indigo"
+    elif deg < 280:
+        base = "violet"
+    elif deg < 300:
+        base = "fuchsia"
+    elif deg < 320:
+        base = "magenta"
+    elif deg < 340:
+        base = "rose"
+    else:
+        base = "ruby"
+
+    # More varied brightness descriptions
+    if value < 0.2:
+        brightness = "midnight"
+    elif value < 0.35:
+        brightness = "dark"
+    elif value < 0.5:
+        brightness = "deep"
+    elif value < 0.65:
+        brightness = "medium"
+    elif value < 0.8:
+        brightness = "bright"
+    elif value < 0.9:
+        brightness = "light"
+    else:
+        brightness = "pale"
+
+    # More varied saturation descriptions
+    if saturation < 0.2:
+        sat_adj = "grayed"
+    elif saturation < 0.4:
+        sat_adj = "muted"
+    elif saturation < 0.6:
+        sat_adj = "soft"
+    elif saturation < 0.8:
+        sat_adj = "rich"
+    else:
+        sat_adj = "vivid"
+
+    # Combine adjectives to form a descriptive name
+    adjectives = [adj for adj in [brightness, sat_adj] if adj]
+    if adjectives:
+        name = " ".join(adjectives) + " " + base
+    else:
+        name = base
+
+    # Capitalize first letter and prepend fixed prefix
+    return "Terminal Util - " + name.capitalize()
+
+
+# Save all Terminal profiles as .terminal files to ~/Downloads/Terminal files
+def save_profiles():
+    print(Fore.GREEN + "Saving terminal profiles to ~/Downloads/Terminal files...")
+    plist_path = os.path.expanduser("~/Library/Preferences/com.apple.Terminal.plist")
+    try:
+        with open(plist_path, "rb") as f:
+            plist_data = plistlib.load(f)
+    except Exception as e:
+        print(Fore.RED + f"Error reading Terminal preferences: {e}")
+        return
+
+    profiles = plist_data.get("Window Settings", {})
+    if not profiles:
+        print(Fore.RED + "No terminal profiles found in the preferences.")
+        return
+
+    out_dir = os.path.expanduser("~/Downloads/Terminal files")
+    os.makedirs(out_dir, exist_ok=True)
+
+    for name, profile in profiles.items():
+        filename = os.path.join(out_dir, f"{name}.terminal")
+        try:
+            with open(filename, "wb") as outf:
+                plistlib.dump(profile, outf)
+            print(Fore.BLUE + f"Saved profile '{name}' to {filename}")
+        except Exception as e:
+            print(Fore.RED + f"Error saving profile '{name}': {e}")
+    print(Fore.GREEN + "All profiles saved successfully.")
+
+
+# Reset Terminal profiles to the default set by removing custom profiles
+def default_profiles():
+    print(Fore.GREEN + "Resetting terminal profiles to default...")
+    plist_path = os.path.expanduser("~/Library/Preferences/com.apple.Terminal.plist")
+    try:
+        with open(plist_path, "rb") as f:
+            plist_data = plistlib.load(f)
+    except Exception as e:
+        print(Fore.RED + f"Error reading Terminal preferences: {e}")
+        return
+
+    if "Window Settings" in plist_data:
+        del plist_data["Window Settings"]
+    else:
+        print(Fore.YELLOW + "No custom profiles found to reset.")
+
+    try:
+        with open(plist_path, "wb") as f:
+            plistlib.dump(plist_data, f)
+        print(
+            Fore.GREEN
+            + "Default profiles restored. (You may need to restart Terminal for changes to take effect.)"
+        )
+    except Exception as e:
+        print(Fore.RED + f"Error writing Terminal preferences: {e}")
+
+
+# Generate a single terminal theme profile based on HSV color parameters
+# Creates a profile dictionary with all necessary settings and colors
+def create_theme_profile(hue, saturation, value, standard_ansi):
+    # Convert HSV to RGB components
+    r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
+
+    # Create NSColor objects for background and determine other colors
+    background_nscolor = NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, 1.0)
+    text_nscolor = NSColor.whiteColor() if value < 0.5 else NSColor.blackColor()
+    bold_text_nscolor = (
+        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.9, 0.9, 0.9, 1.0)
+        if value < 0.5
+        else NSColor.colorWithCalibratedRed_green_blue_alpha_(0.1, 0.1, 0.1, 1.0)
+    )
+    selection_nscolor = NSColor.colorWithCalibratedRed_green_blue_alpha_(
+        1 - r, 1 - g, 1 - b, 1.0
+    )
+
+    # Function to compute luminance from an (r, g, b) tuple
+    def luminance_from_tuple(color_tuple):
+        cr, cg, cb = color_tuple
+        return 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
+
+    # Adjust ANSI colors for better visibility against the background
+    bg_lum = luminance_from_tuple((r, g, b))
+    adjusted_ansi = {}
+    for key, col in standard_ansi.items():
+        lum = luminance_from_tuple(col)
+        if abs(lum - bg_lum) < 0.5:
+            if bg_lum < 0.5:
+                new_col = tuple(min(x + 0.3, 1.0) for x in col)
+            else:
+                new_col = tuple(max(x - 0.3, 0.0) for x in col)
+            adjusted_ansi[key] = new_col
+        else:
+            adjusted_ansi[key] = col
+
+    # Generate a descriptive profile name based on the HSV values
+    profile_name = get_color_name(hue, saturation, value)
+
+    # Create hexadecimal representation of the background color for logging
+    bg_hex = "{:02X}{:02X}{:02X}".format(int(r * 255), int(g * 255), int(b * 255))
+
+    # Build profile dictionary using archived NSColor objects
+    profile = {
+        "BackgroundColor": archive_color(background_nscolor),
+        "TextColor": archive_color(text_nscolor),
+        "BoldTextColor": archive_color(bold_text_nscolor),
+        "SelectionColor": archive_color(selection_nscolor),
+        "CursorColor": archive_color(text_nscolor),  # Use text color for cursor
+        "ProfileCurrentVersion": "2.0700000000000001",
+        "FontAntialias": True,
+        "name": profile_name,
+        "type": "Window Settings",
+        "BlinkText": False,
+        "UseBrightBold": True,
+        "CursorType": 0,
+        "DisableANSIColor": False,
+        "EscapeNonASCIICharacters": False,
+        "ShowActiveProcessArgumentsInTitle": True,
+        "ShowActiveProcessInTitle": True,
+        "ShowCommandKeyInTitle": False,
+        "ShowDimensionsInTitle": False,
+        "ShowRepresentedURLInTitle": True,
+        "ShowRepresentedURLPathInTitle": True,
+        "ShowShellCommandInTitle": True,
+        "ShowTTYNameInTitle": False,
+        "ShowWindowSettingsNameInTitle": False,
+        "VisualBell": False,
+        "WindowTitle": "",
+    }
+
+    # Add ANSI color settings to the profile
+    for key, col in adjusted_ansi.items():
+        profile[key] = archive_color_from_tuple(col)
+
+    return profile_name, profile, bg_hex
+
+
+# Generate and import a Terminal theme without killing the Terminal window
+def generate_and_import_theme(profile_name, profile):
+    # Sanitize profile name for file storage
+    safe_name = profile_name.replace("/", "-")  # keep spaces for display
+    themes_dir = os.path.expanduser(
+        "~/Library/Application Support/Terminal/Generated Themes"
+    )
+    os.makedirs(themes_dir, exist_ok=True)
+    file_path = os.path.join(themes_dir, f"{safe_name}.terminal")
+
+    # Write the profile to a .terminal file
+    try:
+        with open(file_path, "wb") as f:
+            plistlib.dump(profile, f, fmt=plistlib.FMT_BINARY)
+    except Exception as e:
+        print(Fore.RED + f"Failed to write profile file: {e}")
+        return False
+
+    # Import the theme by launching Terminal with the file
+    try:
+        subprocess.run(["open", "-a", "Terminal", file_path], check=True)
+        return True
+    except subprocess.SubprocessError as e:
+        print(Fore.RED + f"Error importing theme {profile_name}: {e}")
+        return False
+
+
+# Generate terminal profiles based on background color variations
+def generate_colors(num_profiles=30, max_saturation=0.4):
+    # First reset to default profiles
+    print(Fore.GREEN + "Resetting to default profiles first...")
+    default_profiles()
+
+    print(
+        Fore.GREEN
+        + f"Generating {num_profiles} terminal profiles with maximum saturation {max_saturation}..."
+    )
+
+    # Standard ANSI colors as (r, g, b) tuples
+    standard_ansi = {
+        "ANSIBlackColor": (0, 0, 0),
+        "ANSIRedColor": (0.8, 0, 0),
+        "ANSIGreenColor": (0, 0.8, 0),
+        "ANSIBrownColor": (0.8, 0.4, 0),
+        "ANSIBlueColor": (0, 0, 0.8),
+        "ANSIPurpleColor": (0.8, 0, 0.8),
+        "ANSICyanColor": (0, 0.8, 0.8),
+        "ANSIWhiteColor": (0.8, 0.8, 0.8),
+        "ANSIBrightBlackColor": (0.5, 0.5, 0.5),
+        "ANSIBrightRedColor": (1, 0, 0),
+        "ANSIBrightGreenColor": (0, 1, 0),
+        "ANSIBrightYellowColor": (1, 1, 0),
+        "ANSIBrightBlueColor": (0, 0, 1),
+        "ANSIBrightPurpleColor": (1, 0, 1),
+        "ANSIBrightCyanColor": (0, 1, 1),
+        "ANSIBrightWhiteColor": (1, 1, 1),
+    }
+
+    success_count = 0
+    for i in range(num_profiles):
+        # Evenly spaced hue across the spectrum
+        hue = (i * 360.0 / num_profiles) / 360.0
+        # Alternate brightness: light (0.9) for even, dark (0.3) for odd
+        value = 0.9 if i % 2 == 0 else 0.3
+        saturation = max_saturation
+
+        # Create and import the theme
+        profile_name, profile, bg_hex = create_theme_profile(
+            hue, saturation, value, standard_ansi
+        )
+
+        if generate_and_import_theme(profile_name, profile):
+            success_count += 1
+            print(
+                Fore.BLUE
+                + f"Generated and imported profile '{profile_name}' with background {bg_hex}"
+            )
+        else:
+            print(Fore.RED + f"Failed to import profile '{profile_name}'")
+
+    print(
+        Fore.GREEN
+        + f"\nSuccessfully generated and imported {success_count} out of {num_profiles} terminal profiles."
+    )
+    print(
+        Fore.YELLOW
+        + "You can now select any of these themes in Terminal > Settings > Profiles"
+    )
+
+
+# Main entry point
+def main():
+    parser = argparse.ArgumentParser(
+        description="Terminal Utilities for managing Terminal themes on macOS"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    save_parser = subparsers.add_parser(
+        "save", help="Save all terminal themes as .terminal files"
+    )
+    default_parser = subparsers.add_parser(
+        "default", help="Reset to the default set of terminal themes"
+    )
+    colors_parser = subparsers.add_parser(
+        "colors", help="Generate and load color-based terminal themes"
+    )
+    colors_parser.add_argument(
+        "--num",
+        type=int,
+        default=30,
+        help="Number of terminal themes to generate (default: 30)",
+    )
+    colors_parser.add_argument(
+        "--max-saturation",
+        type=float,
+        default=0.4,
+        help="Maximum saturation for background colors (default: 0.4)",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "save":
+        save_profiles()
+    elif args.command == "default":
+        default_profiles()
+    elif args.command == "colors":
+        generate_colors(num_profiles=args.num, max_saturation=args.max_saturation)
+    else:
+        parser.print_help()
+
+
+# Tests for the terminal utilities
+def test_get_color_name():
+    # Test various HSV combinations to ensure unique names
+    names = set()
+    for h in [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+        for s in [0.2, 0.5, 0.8]:
+            for v in [0.2, 0.5, 0.8]:
+                name = get_color_name(h, s, v)
+                assert name not in names, f"Duplicate name found: {name}"
+                names.add(name)
+    print("All color names are unique!")
+    return True
+
+
+def test_archive_color():
+    # Test color archiving with a known color
+    color = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.5, 0.5, 0.5, 1.0)
+    archived = archive_color(color)
+    assert isinstance(archived, bytes)
+    assert len(archived) > 0
+    print("Color archiving works!")
+    return True
+
+
+def test_create_theme_profile():
+    # Test profile creation
+    ansi_colors = {
+        "ANSIBlackColor": (0, 0, 0),
+        "ANSIRedColor": (0.8, 0, 0),
+    }
+    name, profile, hex_color = create_theme_profile(0.5, 0.5, 0.5, ansi_colors)
+    assert isinstance(name, str)
+    assert isinstance(profile, dict)
+    assert isinstance(hex_color, str)
+    assert "BackgroundColor" in profile
+    assert "TextColor" in profile
+    print("Theme profile creation works!")
+    return True
+
+
+# Run tests if executed directly
+if __name__ == "__main__":
+    main()
+
+    # Uncomment to run tests
+    # print("\nRunning tests...")
+    # test_get_color_name()
+    # test_archive_color()
+    # test_create_theme_profile()
+    # print("All tests passed!")
