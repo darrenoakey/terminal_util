@@ -94,4 +94,4 @@ To generate 50 themes with a maximum saturation of 0.6, run:
 
 ## License
 
-This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev/license) - free to use and modify, but no commercial use without permission.
