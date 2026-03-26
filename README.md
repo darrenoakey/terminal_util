@@ -91,3 +91,7 @@ To generate 50 themes with a maximum saturation of 0.6, run:
     ```bash
     ./terminal_utils.py colors --num 40 --max-saturation 0.8
     ```
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
